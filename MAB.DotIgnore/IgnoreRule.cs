@@ -10,7 +10,6 @@ namespace MAB.DotIgnore
     /// </summary>
     public class IgnoreRule
     {
-        private bool _singleAsteriskMatchesSlashes;
         private int _wildcardIndex;
 
         private StringComparison sc = StringComparison.Ordinal;
@@ -31,31 +30,21 @@ namespace MAB.DotIgnore
         /// The <see cref="PatternFlags"/> set for the parsed rule pattern
         /// </summary>
         public PatternFlags PatternFlags { get; private set; }
-        /// <summary>
-        /// The <see cref="Regex"/> pattern created from the string pattern
-        /// </summary>
-        public Regex Regex { get; private set; }
-        /// <summary>
-        /// True if this rule was negated by an exclamation mark at the start of the pattern (!*.txt)
-        /// </summary>
-        public bool Negation { get; private set; }
 
         /// <summary>
         /// Create an individual ignore rule for the specified pattern
         /// </summary>
         /// <param name="pattern">A glob pattern specifying file(s) this rule should ignore</param>
         /// <param name="matchFlags">Optional MatchFlags which alter the behaviour of the match</param>
-        public IgnoreRule(string pattern, MatchFlags matchFlags = MatchFlags.IGNORE_CASE | MatchFlags.PATHNAME)
+        public IgnoreRule(string pattern)
         {
             if(Utils.IsNullOrWhiteSpace(pattern))
                 throw new ArgumentNullException(nameof(pattern));
             
             // Keep track of the original pattern before modifications (for display purposes)
             OriginalPattern = pattern;
-
             Pattern = pattern;
-            MatchFlags = matchFlags;
-            Negation = false;
+            MatchFlags = MatchFlags.NONE;
             
             // First, let's figure out some things about the pattern and set flags to pass to our match function
             PatternFlags = PatternFlags.NONE;
@@ -63,10 +52,11 @@ namespace MAB.DotIgnore
             // If the pattern starts with an exclamation mark, it's a negation pattern
             // Once we know that, we can remove the exclamation mark (so the pattern behaves just like any other),
             // then just negate the match result when we return it
-            Negation = Pattern.StartsWith("!", sc);
-
-            if (Negation)
+            if(Pattern.StartsWith("!", sc))
+            { 
+                PatternFlags |= PatternFlags.NEGATION;
                 Pattern = Pattern.Substring(1);
+            }
 
             // If the pattern starts with a forward slash, it should only match an absolute path
             if (Pattern.StartsWith("/", sc))
@@ -84,55 +74,21 @@ namespace MAB.DotIgnore
             }
 
             _wildcardIndex = Pattern.IndexOfAny(new char[] { '*','[','?' });
-    
-            // Set some more pattern flags depending on which glob wildcards appear in the pattern, and where
-            if (_wildcardIndex != -1)
-            {
-                PatternFlags |= PatternFlags.WILD;
-    
-                if (Pattern.Contains("**"))
-                {
-                    PatternFlags |= PatternFlags.WILD2;
+
+            // If PATHNAME is set, single asterisks should not match slashes
+
+            // If the pattern does not *contain* any slashes, it should match any occurence,
+            // anywhere within the path (e.g. 'temp', '*.jpg', '**.png', '?doc')
+            //if(!Pattern.Contains("/"))
+            //    MatchFlags &= MatchFlags.PATHNAME;
+            //else
+            //    MatchFlags |= MatchFlags.PATHNAME;
             
-                    if (Pattern.StartsWith("**", sc))
-                    { 
-                        if(Pattern[2] == '/')
-                        { 
-                            // Patterns beginning with **/ are treated in the same way as global patterns,
-                            // so for example '**/test' is equivalent to 'test'. So if the pattern starts
-                            // with this double-star wildcard, remove it so it is treated the same as if
-                            // there was no prefix
-                            PatternFlags |= PatternFlags.WILD2_PREFIX;
-                            Pattern = Pattern.Substring(3);
-                        }
-                        else
-                        {
-                            // The double-star prefix is invalid without a slash after it, so in this case
-                            // we treat it as a single-star wildcard (strip off the first asterisk)
-                            Pattern = Pattern.Substring(1);
-                        }
-                    }
-                }
-            }
+            MatchFlags |= MatchFlags.PATHNAME;
 
-            // If the pattern does not contain any slashes, it should match any occurence anywhere
-            // within the path (e.g. 'temp', '*.jpg', '**.png', '?doc'), so set PATHNAME accordingly
-            if(!Pattern.Contains("/"))
-                MatchFlags &= ~MatchFlags.PATHNAME;
-
-            // If PATHNAME is set, a single asterisk should not match forward slashes
-            // If not, a single asterisk in the pattern becomes equivalent to **
-            _singleAsteriskMatchesSlashes = !MatchFlags.HasFlag(MatchFlags.PATHNAME);
-
-            // If we're passing IGNORE_CASE, uppercase the pattern and set string comparisons to ignore case too
-            if (MatchFlags.HasFlag(MatchFlags.IGNORE_CASE))
-            { 
-                Pattern = Pattern.ToUpperInvariant();
+            // If we're passing CASEFOLD, set string comparisons to ignore case too
+            if (MatchFlags.HasFlag(MatchFlags.CASEFOLD))
                 sc = StringComparison.OrdinalIgnoreCase;
-            }
-
-            // Translate the glob pattern into a regular expression, in case simple string matching isn't enough
-            Regex = GlobPatternToRegex(Pattern, _singleAsteriskMatchesSlashes);
         }
 
         //    PATTERN FORMAT
@@ -222,10 +178,6 @@ namespace MAB.DotIgnore
             if (PatternFlags.HasFlag(PatternFlags.DIRECTORY) && pathIsDirectory == false)
                 return false;
 
-            // If we're passing IGNORE_CASE, uppercase the pattern
-            if (MatchFlags.HasFlag(MatchFlags.IGNORE_CASE))
-                path = path.ToUpperInvariant();
-
             // If the pattern is an absolute path pattern, the path must start with the part of the pattern
             // before any wildcards occur. If it doesn't, we can just return a negative match
             var patternBeforeFirstWildcard = _wildcardIndex != -1 ? Pattern.Substring(0, _wildcardIndex) : Pattern;
@@ -239,10 +191,10 @@ namespace MAB.DotIgnore
                 return path.EndsWith(Pattern, sc);
 
             // If we got this far, we can't figure out the match with simple string matching, 
-            // so we'll use the regular expression we built from the original glob pattern
+            // so we'll use our wildmatch implementation
     
-            // Return the regex match result, taking negation into account
-            return Regex.IsMatch(path);
+            // Return the match result
+            return WildMatch.IsMatch(Pattern, path, MatchFlags) == WildMatch.MATCH;
         }
 
         /// <summary>
@@ -251,43 +203,7 @@ namespace MAB.DotIgnore
         /// </summary>
         public override string ToString()
         {
-            return string.Format("{0} > {1} > {2}", OriginalPattern, Pattern, Regex);
-        }
-
-        private Regex GlobPatternToRegex(string globPattern, bool singleAsteriskMatchesSlashes)
-        {
-            var regexBuilder = new StringBuilder(globPattern);
-
-            string[] globLiterals = { "\\", ".", "$", "^", "{", "(", "|", ")", "+" };
-
-            foreach (string globLiteral in globLiterals)
-                regexBuilder.Replace(globLiteral, @"\" + globLiteral);
-
-            var regexPattern = regexBuilder.ToString();
-
-            if (singleAsteriskMatchesSlashes)
-            {
-                // If there are no path separators in the rule, treat asterisks the same way as double asterisks
-                // This handles wildcards for file extensions (e.g. *.txt)
-                regexPattern = Regex.Replace(regexPattern, @"\*+", ".*");
-            }
-            else
-            { 
-                // Two consecutive asterisks should translate into .*
-                // Replace any occurrences with a placeholder, so that we can match single asterisks differently with the next pass
-                regexPattern = Regex.Replace(regexPattern, @"\*\*", ".{@}");
-                // Now replace single asterisks - should match everything except forward slashes
-                regexPattern = Regex.Replace(regexPattern, @"\*", "[^/]+");
-                // Now single asterisks have been dealt with, replace any double-asterisk placeholders with the correct regex pattern
-                regexPattern = Regex.Replace(regexPattern, @"\.\{\@\}", ".*");
-            }
-
-            // Add on the end of line pattern char ($) so that wildcard matches aren't too greedy
-            // Omitting this means that ignore pattern '*.cs' would match files with a '.cshtml' 
-            // extension as well as '.cs' files, which is definitely not what we want!
-            regexPattern = Regex.Replace(regexPattern, @"\?", ".") + "$";
-
-            return new Regex(regexPattern, MatchFlags.HasFlag(MatchFlags.IGNORE_CASE) ? RegexOptions.IgnoreCase : RegexOptions.None);
+            return string.Format("{0} > {1}", OriginalPattern, Pattern);
         }
 
         private string NormalisePath(string path)
