@@ -74,21 +74,16 @@ namespace MAB.DotIgnore
             }
 
             _wildcardIndex = Pattern.IndexOfAny(new char[] { '*','[','?' });
-
-            // If PATHNAME is set, single asterisks should not match slashes
-
-            // If the pattern does not *contain* any slashes, it should match any occurence,
-            // anywhere within the path (e.g. 'temp', '*.jpg', '**.png', '?doc')
-            //if(!Pattern.Contains("/"))
-            //    MatchFlags &= MatchFlags.PATHNAME;
-            //else
-            //    MatchFlags |= MatchFlags.PATHNAME;
             
-            MatchFlags |= MatchFlags.PATHNAME;
-
-            // If we're passing CASEFOLD, set string comparisons to ignore case too
+            // If CASEFOLD is set, string comparisons should ignore case too
             if (MatchFlags.HasFlag(MatchFlags.CASEFOLD))
                 sc = StringComparison.OrdinalIgnoreCase;
+
+            // TODO: Currently, we are just setting PATHNAME for every rule, because it seems to match the original behaviour
+            // See here for a clue: https://github.com/git/git/blob/c2c5f6b1e479f2c38e0e01345350620944e3527f/dir.c#L99
+
+            // If PATHNAME is set, single asterisks should not match slashes
+            MatchFlags |= MatchFlags.PATHNAME;
         }
 
         // PATTERN FORMAT
@@ -190,10 +185,24 @@ namespace MAB.DotIgnore
             if (!PatternFlags.HasFlag(PatternFlags.ABSOLUTE_PATH) && _wildcardIndex == -1)
                 return path.EndsWith(Pattern, sc);
 
-            // If we got this far, we can't figure out the match with simple string matching, 
-            // so we'll use our wildmatch implementation
-    
-            // Return the match result
+            // If we got this far, we can't figure out the match with simple string matching, so use our wildmatch implementation
+            
+            // If the pattern does not contain any slashes it should match *any* occurence, *anywhere* within the path 
+            // (e.g. '*.jpg' should match 'a.jpg', 'a/b.jpg', 'a/b/c.jpg'), so try matching before each slash
+            if (!Pattern.Contains("/") && path.Contains("/"))
+            {
+                string[] segments = path.Split('/');
+
+                foreach(var segment in segments)
+                {
+                    if(WildMatch.IsMatch(Pattern, segment, MatchFlags) == WildMatch.MATCH)
+                        return true;
+                }
+
+                return false;
+            }
+
+            // If the *path* doesn't contain any slashes, we should skip over the conditional above
             return WildMatch.IsMatch(Pattern, path, MatchFlags) == WildMatch.MATCH;
         }
 
