@@ -330,7 +330,7 @@ namespace MAB.DotIgnore
 
         static bool CC_EQ(char[] pattern, int s, int len, string @class)
         {
-            return new String(pattern, s, len).CompareTo(@class) == 0;
+            return string.Compare(new String(pattern, s, len), @class, StringComparison.Ordinal) == 0;
         }
     }
 }
