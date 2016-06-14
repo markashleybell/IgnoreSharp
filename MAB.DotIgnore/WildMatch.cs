@@ -5,7 +5,7 @@ using System.Text;
 
 namespace MAB.DotIgnore
 {
-    public static class WildMatch
+    internal static class WildMatch
     {
         public const int ABORT_MALFORMED = 2;
         public const int NOMATCH = 1;
@@ -21,7 +21,7 @@ namespace MAB.DotIgnore
             return Match(pattern.ToCharArray(), text.ToCharArray(), 0, 0, flags);
         }
 
-        public static int Match(char[] pattern, char[] text, int p, int t, MatchFlags flags)
+        private static int Match(char[] pattern, char[] text, int p, int t, MatchFlags flags)
         {
             int p_len = pattern.Length;
             int p_EOP = p_len - 1;
