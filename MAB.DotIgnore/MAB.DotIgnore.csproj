@@ -32,6 +32,12 @@
     <WarningLevel>4</WarningLevel>
     <DocumentationFile>bin\Release\MAB.DotIgnore.XML</DocumentationFile>
   </PropertyGroup>
+  <PropertyGroup>
+    <SignAssembly>true</SignAssembly>
+  </PropertyGroup>
+  <PropertyGroup>
+    <AssemblyOriginatorKeyFile>key.snk</AssemblyOriginatorKeyFile>
+  </PropertyGroup>
   <ItemGroup>
     <Reference Include="System" />
   </ItemGroup>
@@ -50,6 +56,7 @@
     <None Include="gulpfile.js" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="key.snk" />
     <None Include="MAB.DotIgnore.nuspec" />
     <None Include="package.json" />
   </ItemGroup>
